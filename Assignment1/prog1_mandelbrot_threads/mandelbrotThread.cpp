@@ -34,8 +34,19 @@ void workerThreadStart(WorkerArgs * const args) {
     // to compute a part of the output image.  For example, in a
     // program that uses two threads, thread 0 could compute the top
     // half of the image and thread 1 could compute the bottom half.
-
+    double startTime = CycleTimer::currentSeconds();
     printf("Hello world from thread %d\n", args->threadId);
+    // int numRows = args->height / args->numThreads;
+    // mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, 
+    // args->width, args->height, 
+    // numRows * args->threadId, numRows, args->maxIterations, args->output);
+    for (size_t i = args->threadId; i < args->height; i += args->numThreads) {
+        mandelbrotSerial(args->x0, args->y0, args->x1, args->y1, 
+        args->width, args->height, 
+        i, 1, args->maxIterations, args->output);
+    }
+    double endTime = CycleTimer::currentSeconds();
+    printf("[parallel part timing]: thread %d \t\t[%.3f] ms\n", args->threadId, (endTime - startTime) * 1000);
 }
 
 //
@@ -86,9 +97,10 @@ void mandelbrotThread(
         workers[i] = std::thread(workerThreadStart, &args[i]);
     }
     
+    // main thread
     workerThreadStart(&args[0]);
 
-    // join worker threads
+    // join worker threads, let the main thread end only after all the sub threads quit
     for (int i=1; i<numThreads; i++) {
         workers[i].join();
     }
