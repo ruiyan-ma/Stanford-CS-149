@@ -249,7 +249,59 @@ void clampedExpVector(float* values, int* exponents, float* output, int N) {
   // Your solution should work for any value of
   // N and VECTOR_WIDTH, not just when VECTOR_WIDTH divides N
   //
+  __cs149_mask maskall = _cs149_init_ones(VECTOR_WIDTH);
   
+  __cs149_vec_float x;
+  __cs149_vec_float allonesf = _cs149_vset_float(1.f);
+  __cs149_vec_int y, count;
+  __cs149_vec_int zero = _cs149_vset_int(0);
+  __cs149_vec_int allonesi = _cs149_vset_int(1);
+  __cs149_vec_float result_cmp = _cs149_vset_float(9.999999f);
+  int i = 0;
+  for (; i < N; i += VECTOR_WIDTH) {
+    // must put this inside the for loop
+    __cs149_mask masknegative = _cs149_init_ones(0);
+    __cs149_mask mask_count = _cs149_init_ones(0);
+    __cs149_mask mask_result = _cs149_init_ones(0);
+
+    _cs149_vload_float(x, values + i, maskall);
+    _cs149_vload_int(y, exponents + i, maskall);
+    _cs149_veq_float(masknegative, y, zero, maskall); // if (y == 0) {
+    _cs149_vstore_float(output + i, allonesf, masknegative); // output[i] = 1.f
+    __cs149_mask maskpositive = _cs149_mask_not(masknegative);  // else
+    __cs149_vec_float result = x; // result = x
+    _cs149_vsub_int(count, y, allonesi, maskpositive);  // count = y - 1
+    _cs149_vgt_int(mask_count, count, zero, maskpositive); // while (count > 0)
+    while (_cs149_cntbits(mask_count)) {  // while (count > 0)
+      _cs149_vmult_float(result, result, x, mask_count); // result *= x
+      _cs149_vsub_int(count, count, allonesi, mask_count);  // count--
+      _cs149_vgt_int(mask_count, count, zero, mask_count); // while (count > 0)
+    }
+    _cs149_vgt_float(mask_result, result, result_cmp, maskpositive); // if (result > 9.999999f)
+    _cs149_vset_float(result, result_cmp, mask_result); // result = 9.999999f
+    _cs149_vstore_float(output + i, result, maskpositive);  // output[i] = result
+  }
+
+  // tail case
+  i -= VECTOR_WIDTH;
+  for (; i < N; ++i) {
+    float x = values[i];
+    int y = exponents[i];
+    if (y == 0) {
+      output[i] = 1.f;
+    } else {
+      float result = x;
+      int count = y - 1;
+      while (count > 0) {
+        result *= x;
+        count--;
+      }
+      if (result > 9.999999f) {
+        result = 9.999999f;
+      }
+      output[i] = result;
+    }
+  }
 }
 
 // returns the sum of all elements in values
