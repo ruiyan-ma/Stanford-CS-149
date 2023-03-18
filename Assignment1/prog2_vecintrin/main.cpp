@@ -264,9 +264,9 @@ void clampedExpVector(float* values, int* exponents, float* output, int N) {
     __cs149_mask mask_count = _cs149_init_ones(0);
     __cs149_mask mask_result = _cs149_init_ones(0);
 
-    _cs149_vload_float(x, values + i, maskall);
-    _cs149_vload_int(y, exponents + i, maskall);
-    _cs149_veq_float(masknegative, y, zero, maskall); // if (y == 0) {
+    _cs149_vload_float(x, values + i, maskall); // float x = values[i]
+    _cs149_vload_int(y, exponents + i, maskall);  // int y = exponents[i]
+    _cs149_veq_int(masknegative, y, zero, maskall); // if (y == 0) {
     _cs149_vstore_float(output + i, allonesf, masknegative); // output[i] = 1.f
     __cs149_mask maskpositive = _cs149_mask_not(masknegative);  // else
     __cs149_vec_float result = x; // result = x
@@ -278,9 +278,11 @@ void clampedExpVector(float* values, int* exponents, float* output, int N) {
       _cs149_vgt_int(mask_count, count, zero, mask_count); // while (count > 0)
     }
     _cs149_vgt_float(mask_result, result, result_cmp, maskpositive); // if (result > 9.999999f)
-    _cs149_vset_float(result, result_cmp, mask_result); // result = 9.999999f
+    _cs149_vset_float(result, 9.999999f, mask_result); // result = 9.999999f
     _cs149_vstore_float(output + i, result, maskpositive);  // output[i] = result
   }
+
+  if (i == N) return;
 
   // tail case
   i -= VECTOR_WIDTH;
@@ -322,11 +324,21 @@ float arraySumVector(float* values, int N) {
   //
   // CS149 STUDENTS TODO: Implement your vectorized version of arraySumSerial here
   //
-  
+  float result;
+  __cs149_vec_float sum = _cs149_vset_float(0);
+  __cs149_mask maskall = _cs149_init_ones(VECTOR_WIDTH);
+  __cs149_mask maskfirst = _cs149_init_ones(1);
+  __cs149_vec_float x;
   for (int i=0; i<N; i+=VECTOR_WIDTH) {
-
+    _cs149_vload_float(x, values + i, maskall);
+    _cs149_vadd_float(sum, sum, x, maskall);
   }
+  for (int i = 0; i < static_cast<int>(log2(VECTOR_WIDTH)); ++i) {
+    _cs149_hadd_float(sum, sum);
+    _cs149_interleave_float(sum, sum);
+  }
+  _cs149_vstore_float(&result, sum, maskfirst);
 
-  return 0.0;
+  return result;
 }
 
