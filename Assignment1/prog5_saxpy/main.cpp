@@ -5,7 +5,7 @@
 #include "saxpy_ispc.h"
 
 extern void saxpySerial(int N, float a, float* X, float* Y, float* result);
-
+extern void saxpySimd(int N, float a, float* X, float* Y, float* result);
 
 // return GB/s
 static float
@@ -42,6 +42,8 @@ int main() {
     float* resultSerial = new float[N];
     float* resultISPC = new float[N];
     float* resultTasks = new float[N];
+    float* resultSIMD = new(std::align_val_t{ 32 }) float[N];
+    // float* resultSIMD = reinterpret_cast<float*>(::operator new(N, std::align_val_t{ 32 }));
 
     // initialize array values
     for (unsigned int i=0; i<N; i++)
@@ -51,6 +53,7 @@ int main() {
         resultSerial[i] = 0.f;
         resultISPC[i] = 0.f;
         resultTasks[i] = 0.f;
+        resultSIMD[i] = 0.f;
     }
 
     //
@@ -65,10 +68,26 @@ int main() {
         minSerial = std::min(minSerial, endTime - startTime);
     }
 
-// printf("[saxpy serial]:\t\t[%.3f] ms\t[%.3f] GB/s\t[%.3f] GFLOPS\n",
-    //       minSerial * 1000,
-    //       toBW(TOTAL_BYTES, minSerial),
-    //       toGFLOPS(TOTAL_FLOPS, minSerial));
+    printf("[saxpy serial]:\t\t[%.3f] ms\t[%.3f] GB/s\t[%.3f] GFLOPS\n",
+            minSerial * 1000,
+            toBW(TOTAL_BYTES, minSerial),
+            toGFLOPS(TOTAL_FLOPS, minSerial));
+
+    // run simd
+    double minSimd = 1e30;
+    for (int i = 0; i < 3; ++i) {
+        double startTime =CycleTimer::currentSeconds();
+        saxpySimd(N, scale, arrayX, arrayY, resultSIMD);
+        double endTime = CycleTimer::currentSeconds();
+        minSimd = std::min(minSimd, endTime - startTime);
+    }
+
+    verifyResult(N, resultSIMD, resultSerial);
+
+    printf("[saxpy simd]:\t\t[%.3f] ms\t[%.3f] GB/s\t[%.3f] GFLOPS\n",
+            minSimd * 1000,
+            toBW(TOTAL_BYTES, minSimd),
+            toGFLOPS(TOTAL_FLOPS, minSimd));
 
     //
     // Run the ISPC (single core) implementation
@@ -115,6 +134,8 @@ int main() {
     delete[] resultSerial;
     delete[] resultISPC;
     delete[] resultTasks;
+    ::operator delete(resultSIMD, std::align_val_t{ 32 });
+    // delete[] resultSIMD;
 
     return 0;
 }

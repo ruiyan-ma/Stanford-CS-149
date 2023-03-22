@@ -1,5 +1,5 @@
-CXX=g++ -m64
-CXXFLAGS=-I../common -Iobjs/ -O2 -Wall 
+CXX=g++ -m64 -march=native
+CXXFLAGS=-I../common -Iobjs/ -O2 -Wall -std=c++17
 ISPC=ispc
 # note: requires AVX2
 ISPCFLAGS=-O3 --target=avx2-i32x8 --arch=x86-64 --pic
@@ -22,7 +22,7 @@ dirs:
 clean:
 		/bin/rm -rf $(OBJDIR) *.ppm *~ $(APP_NAME)
 
-OBJS=$(OBJDIR)/main.o $(OBJDIR)/saxpySerial.o $(OBJDIR)/saxpy_ispc.o $(TASKSYS_OBJ)
+OBJS=$(OBJDIR)/main.o $(OBJDIR)/saxpySerial.o $(OBJDIR)/saxpySimd.o $(OBJDIR)/saxpy_ispc.o $(TASKSYS_OBJ)
 
 $(APP_NAME): dirs $(OBJS)
 		$(CXX) $(CXXFLAGS) -o $@ $(OBJS) -lm $(TASKSYS_LIB)
