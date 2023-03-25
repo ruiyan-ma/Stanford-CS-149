@@ -43,7 +43,7 @@ int main() {
     float* resultISPC = new float[N];
     float* resultTasks = new float[N];
     float* resultSIMD = new(std::align_val_t{ 32 }) float[N];
-    // float* resultSIMD = reinterpret_cast<float*>(::operator new(N, std::align_val_t{ 32 }));
+    // float* resultSIMD = reinterpret_cast<float*>(::operator new[](N, std::align_val_t{ 32 }));
 
     // initialize array values
     for (unsigned int i=0; i<N; i++)
@@ -134,8 +134,8 @@ int main() {
     delete[] resultSerial;
     delete[] resultISPC;
     delete[] resultTasks;
-    ::operator delete(resultSIMD, std::align_val_t{ 32 });
-    // delete[] resultSIMD;
+    ::operator delete[](resultSIMD, N * sizeof(float), std::align_val_t{ 32 });
+    //delete[] resultSIMD;
 
     return 0;
 }
