@@ -242,11 +242,11 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
 void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading(IRunnable* runnable, int num_total_tasks) {
     int curr_num_tasks_copy;
     while (true) {
-        mutex_->lock();
+        //mutex_->lock();
         // now re-acquire the lk automatically
         curr_num_tasks_copy = curr_num_tasks_;
         curr_num_tasks_++;
-        mutex_->unlock();
+        //mutex_->unlock();
         if (curr_num_tasks_copy >= num_total_tasks) {
             finished_threads_++;
             condition_variable_->notify_one();

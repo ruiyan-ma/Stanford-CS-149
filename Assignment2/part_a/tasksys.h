@@ -93,7 +93,7 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
 
     private:
         int num_threads_;
-        int curr_num_tasks_;
+        std::atomic<int> curr_num_tasks_;
         std::atomic<int> finished_threads_;
         std::thread* threads_;
         std::mutex* mutex_;
