@@ -524,6 +524,7 @@ TestResults simpleTest(ITaskSystem* t, bool do_async) {
     // Run the test
     double start_time = CycleTimer::currentSeconds();
     if (do_async) {
+        //std::cout << "start the test" << std::endl;
         std::vector<TaskID> firstDeps;
         TaskID first_task_id = t->runAsyncWithDeps(&first, num_tasks, firstDeps);
         std::vector<TaskID> secondDeps;
@@ -629,6 +630,7 @@ TestResults pingPongTest(ITaskSystem* t, bool equal_work, bool do_async,
             }
             prev_task_id = t->runAsyncWithDeps(
                 runnables[i], num_tasks, deps);
+            //std::cout << i << std::endl;
         } else {
             t->run(runnables[i], num_tasks);
         }
@@ -1381,7 +1383,9 @@ TestResults strictGraphDepsTestBase(ITaskSystem*t, int n, int m, unsigned int se
     double start_time = CycleTimer::currentSeconds();
     for (int i = 0; i < n; i++) {
         // Populate TaskID deps.
+        //std::cout << "-----------" << std::endl;
         for (int idx : idx_deps[i]) {
+            //std::cout << "task ID: " << task_ids[idx] << std::endl;
             task_deps[i].push_back(task_ids[idx]);
         }
         // Launch async and record this task's id.

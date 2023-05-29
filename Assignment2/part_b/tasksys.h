@@ -89,22 +89,29 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         std::condition_variable* condition_variable_;
         std::atomic<bool> finished_;
 
+        // this variable will always record the smallest level that is not finished
+        std::atomic<int> finished_level_;
+
         void runTasksMultithreading(TaskID tid, IRunnable* runnable, int num_total_tasks);
-        void runTasksMultithreading_chunked(const std::vector<TaskID>& id_vec);
-        void runAsyncWithDepsHelper();
-        int update_dag(const std::vector<TaskID>& deps);
+        void runTasksMultithreading_chunked(int next_start_level, const std::vector<TaskID>& vec);
+        void runAsyncWithDepsHelper(int next_start_level);
+        int update_dag(const std::vector<TaskID>& deps, int depth);
 
         TaskID counter_;
 
         std::unordered_map<TaskID, IRunnable*> id_runnable;
         std::unordered_map<TaskID, int> id_num_tasks;
-        std::unordered_map<TaskID, std::atomic<int>> id_curr_num_tasks;
+        std::unordered_map<TaskID, int> id_curr_num_tasks;
         std::unordered_map<TaskID, std::vector<TaskID>> id_vecid;   // use this to find the DAG
-        //std::unordered_map<TaskID, std::atomic<int>> id_finished_threads;
-        //std::unordered_map<TaskID, bool> id_start;
-        //std::unordered_set<std::atomic<TaskID>> id_finished;
+        std::unordered_map<TaskID, int> id_depth;                   // record the depth/level of the task
         std::vector<std::vector<TaskID>> work_queue;
-        //std::unordered_map<TaskID, int> id_level;
+        std::unordered_set<TaskID> id_finished;
+
+        void join_threads() {
+            for (int i = 0; i < num_threads_; ++i) {
+                if (threads_[i].joinable()) threads_[i].join();
+            }
+        };
 };
 
 #endif
