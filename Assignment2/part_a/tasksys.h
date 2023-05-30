@@ -7,6 +7,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <iostream>
+#include <queue>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -87,19 +88,29 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
                                 const std::vector<TaskID>& deps);
         void sync();
 
-        bool if_finished() {
-            return finished_threads_ >= num_threads_;
+        bool is_finished() {
+            return finished_;
         };
+
+        bool next_round_or_end() {
+            return !finished_ || end_;
+        }
 
     private:
         int num_threads_;
-        std::atomic<int> curr_num_tasks_;
-        std::atomic<int> finished_threads_;
+        int curr_num_tasks_;
+        std::atomic<int> runTask_time_;
         std::thread* threads_;
         std::mutex* mutex_;
+        std::mutex* mutex_main_thread_;
         std::condition_variable* condition_variable_;
+        std::condition_variable* condition_variable_main_thread_;
+        int task_n_;
+        IRunnable* task_r_;
+        bool end_;
+        bool finished_;
 
-        void runTasksMultithreading(IRunnable* runnable, int num_total_tasks);
+        void runTasksMultithreading();
 };
 
 #endif

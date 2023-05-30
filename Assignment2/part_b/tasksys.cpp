@@ -129,8 +129,6 @@ const char* TaskSystemParallelThreadPoolSleeping::name() {
 TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int num_threads): 
     ITaskSystem(num_threads), 
     num_threads_(num_threads), 
-    //curr_num_tasks_(0), 
-    //finished_threads_(0),
     finished_(true),
     finished_level_(-1),
     counter_(0) {
@@ -143,8 +141,6 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     threads_ = new std::thread[num_threads_];
     mutex_ = new std::mutex();
     condition_variable_ = new std::condition_variable();
-
-    //work_queue = std::vector<std::vector<TaskID>>();
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -211,7 +207,10 @@ void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked(int le
     int curr_num_tasks_copy, num_total_tasks;
     IRunnable* runnable;
     while (true) {
-        if (finished_) return;
+        if (finished_) {
+            condition_variable_->notify_all();
+            return;
+        }
         mutex_->lock();
         if (id_finished.size() == size) {
             mutex_->unlock();
@@ -222,12 +221,10 @@ void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked(int le
         }
         auto tid = vec[i];
         if (id_finished.count(tid) == 0) {
-            //mutex_->lock();
             curr_num_tasks_copy = id_curr_num_tasks[tid];
             num_total_tasks = id_num_tasks[tid];
             runnable = id_runnable[tid];
             id_curr_num_tasks[tid]++;
-            //mutex_->unlock();
             // here we must use the copy local value, since the real value might has been changed by other threads
             if (curr_num_tasks_copy >= num_total_tasks) {
                 id_finished.insert(tid);
@@ -261,8 +258,8 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
     // update the work queue
     work_queue.push_back({});
     // return the level that the current task belongs to
-    std::cout << "prepare to update the DAG..." << std::endl;
-    auto level = update_dag(deps, 0);
+    auto level = update_dag(deps);
+    id_depth[counter_] = level;
 
     //std::cout << "level: " << level << std::endl;
     work_queue[level].push_back(counter_);
@@ -278,22 +275,13 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
     // 注意现在当前level的所有任务未必都完成，因为我们可能刚才上方的代码中在当前level加入了新的元素
     // 但finished_level代表了刚在处理的层
     if (finished_level_ >= 0) {
-        if (id_finished.size() == work_queue[finished_level_].size()) {
-            work_queue[finished_level_].clear();
-        } else {
-            std::cout << "current level: " << level << std::endl;
-            std::cout << "finished level: " << finished_level_ << std::endl;
-            std::cout << "size of finished set: " << id_finished.size() << std::endl;
-            std::cout << "size of current level: " << work_queue[finished_level_].size() << std::endl;
-            auto st = work_queue[finished_level_].begin();
-            work_queue[finished_level_].erase(st, st + id_finished.size());
-        }
+        auto st = work_queue[finished_level_].begin();
+        work_queue[finished_level_].erase(st, st + id_finished.size());
         id_finished.clear();        
     }
 
     for (int level = 0; level < work_queue.size(); ++level) {
         if (!work_queue[level].empty()) {
-            std::cout << "change level from " << finished_level_ << " to " << level - 1 << std::endl;
             finished_level_ = level - 1;
             break;
         }
@@ -301,33 +289,12 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
 
     // // so here we can assume all work int the above level has been finished now 
     // // find the 1st level which has not started yet
-    runAsyncWithDepsHelper(finished_level_ + 1);
+    if (finished_level_ + 1 < work_queue.size())
+        runAsyncWithDepsHelper(finished_level_ + 1);
     return counter_++;
 }
 
 void TaskSystemParallelThreadPoolSleeping::runAsyncWithDepsHelper(int next_start_level) {
-
-    // std::vector<TaskID> cur;
-    // for (int level = 0; level < work_queue.size(); level++) {
-    //     // if this level's work has been finished, continue
-    //     if ((finished_level_ >> level) & 1) continue;
-    //     for (auto & task : work_queue[level]) {
-    //         mutex_map_->lock();
-    //         if (id_curr_num_tasks[task] < id_num_tasks[task]) {
-    //             // this task does not finished
-    //             cur.push_back(task);
-    //         }
-    //         mutex_map_->unlock();
-    //     }
-    //     // give the unfinished work vector to the multithreading function
-    //     if (cur.size()) {
-    //         finished_ = false;
-    //         for (int i = 0; i < num_threads_; i++) {
-    //             threads_[i] = std::thread(&TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked, this, level, cur);
-    //         }
-    //         break;
-    //     }
-    // } 
 
     // since this function will not be called at the same time with the multithreading function, mutex is not a must
     auto vec = work_queue[next_start_level];
@@ -338,12 +305,12 @@ void TaskSystemParallelThreadPoolSleeping::runAsyncWithDepsHelper(int next_start
     }
 }
 
-int TaskSystemParallelThreadPoolSleeping::update_dag(const std::vector<TaskID>& deps, int depth) {
+int TaskSystemParallelThreadPoolSleeping::update_dag(const std::vector<TaskID>& deps) {
     int level = 0;
-    //std::cout << "depth: " << depth << std::endl;
     for (auto &id : deps) {
+        //std::cout << "update id: " << id << std::endl;
         if (!id_depth.count(id)) {
-            id_depth[id] = update_dag(id_vecid[id], depth + 1);
+            id_depth[id] = update_dag(id_vecid[id]);
         }
         level = std::max(level, 1 + id_depth[id]);
     }
@@ -351,7 +318,6 @@ int TaskSystemParallelThreadPoolSleeping::update_dag(const std::vector<TaskID>& 
 }
 
 void TaskSystemParallelThreadPoolSleeping::sync() {
-    // std::cout << "start to sync" << std::endl;
     //
     // TODO: CS149 students will modify the implementation of this method in Part B.
     //
@@ -371,31 +337,24 @@ void TaskSystemParallelThreadPoolSleeping::sync() {
     lk.unlock();
     join_threads();
     if (finished_level_ >= 0) {
-        if (id_finished.size() == work_queue[finished_level_].size()) {
-            work_queue[finished_level_].clear();
-        } else {
-            //std::cout << "current level: " << level << std::endl;
-            std::cout << "finished level: " << finished_level_ << std::endl;
-            std::cout << "size of finished set: " << id_finished.size() << std::endl;
-            std::cout << "size of current level: " << work_queue[finished_level_].size() << std::endl;
-            auto st = work_queue[finished_level_].begin();
-            work_queue[finished_level_].erase(st, st + id_finished.size());
-        }
+        auto st = work_queue[finished_level_].begin();
+        work_queue[finished_level_].erase(st, st + id_finished.size());
         id_finished.clear();        
     }
     for (int level = 0; level < work_queue.size(); ++level) {
         if (!work_queue[level].empty()) {
-            std::cout << "change level from " << finished_level_ << " to " << level - 1 << std::endl;
             finished_level_ = level - 1;
             break;
         }
     }
-    //id_finished.clear(); 
+
     // in this loop, deal with one level per loop
     for (int i = finished_level_ + 1; i < last_level; ++i) {
         runAsyncWithDepsHelper(i);
         lk.lock();
         // block this thread and give away the CPU execution resources until the jon has been finished
+        // 这里可能发生的一种情况是，该主线程被自线程以notify_all唤醒，但是试图获取锁时，发现其余自线程正霸占着这把锁，所以继续sleep
+        // 可能造成主线程最终无法被唤醒，解决方法是让每一个自线程退出时，都试图notify_all一下主线程
         condition_variable_->wait(lk, [&]{return if_finished();});
         lk.unlock();
         join_threads();

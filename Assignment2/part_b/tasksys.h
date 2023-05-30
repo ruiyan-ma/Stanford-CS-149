@@ -95,7 +95,7 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         void runTasksMultithreading(TaskID tid, IRunnable* runnable, int num_total_tasks);
         void runTasksMultithreading_chunked(int next_start_level, const std::vector<TaskID>& vec);
         void runAsyncWithDepsHelper(int next_start_level);
-        int update_dag(const std::vector<TaskID>& deps, int depth);
+        int update_dag(const std::vector<TaskID>& deps);
 
         TaskID counter_;
 
