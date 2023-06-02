@@ -131,7 +131,14 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     num_threads_(num_threads), 
     finished_(true),
     finished_level_(-1),
-    counter_(0) {
+    counter_(0),
+    end_(false),
+    sum_of_level_tasks_(0),
+    curr_num_tasks_(0),
+    runTask_time_(0),
+    task_n_(0),
+    task_r_(nullptr) {
+    //level_finished_(0) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -141,6 +148,12 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     threads_ = new std::thread[num_threads_];
     mutex_ = new std::mutex();
     condition_variable_ = new std::condition_variable();
+    condition_variable_main_thread_ = new std::condition_variable();
+
+    // create a thread pool
+    for (int i = 0; i < num_threads_; ++i) {
+        threads_[i] = std::thread(&TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked, this);
+    }
 }
 
 TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
@@ -150,9 +163,20 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     // Implementations are free to add new class member variables
     // (requiring changes to tasksys.h).
     //
+    //std::cout << "start delete" << std::endl;
+    mutex_->lock();
+    end_ = true;
+    mutex_->unlock();
+
+    condition_variable_->notify_all();
+    //std::cout << "loop finished" << std::endl;
+    join_threads();
+    //std::cout << "finish delete" << std::endl;
+
     delete[] threads_;
     delete mutex_;
     delete condition_variable_;
+    delete condition_variable_main_thread_;
 }
 
 void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_total_tasks) {
@@ -164,79 +188,51 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // tasks sequentially on the calling thread.
     //
 
-    for (int i = 0; i < num_threads_; ++i) {
-        threads_[i] = std::thread(&TaskSystemParallelThreadPoolSleeping::runTasksMultithreading, this, counter_, runnable, num_total_tasks);
-    }
+    task_r_ = runnable;
+    task_n_ = num_total_tasks;
+    finished_ = false;
 
-
-    // std::unique_lock<std::mutex> lk(*mutex_);
-    // condition_variable_->wait(lk, [&]{return if_finished();});
-
-    // for (int i = 0; i < num_threads_; ++i) {
-    //     threads_[i].join();
-    // }
-
-    // curr_num_tasks_ = 0;
-    // finished_threads_ = 0;
+    // 注意notify_all会唤醒所有线程，而拿不到锁的线程会轮询以试图获得锁，而不是再次沉睡
+    condition_variable_->notify_all();
+    std::unique_lock<std::mutex> lk(*mutex_);
+    condition_variable_main_thread_->wait(lk, [this]{return if_finished();});
+    task_n_ = 0;
+    runTask_time_ = 0;
+    curr_num_tasks_ = 0;
 }
 
 void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading(TaskID tid, IRunnable* runnable, int num_total_tasks) {
-    //int curr_num_tasks_copy;
-    // while (true) {
-    //     //mutex_->lock();
-    //     // now re-acquire the lk automatically
-    //     curr_num_tasks_copy = id_curr_num_tasks[tid];
-    //     id_curr_num_tasks[tid]++;
-    //     //mutex_->unlock();
-    //     if (curr_num_tasks_copy >= num_total_tasks) {
-    //         id_finished_threads[tid]++;
-    //         if (id_finished_threads[tid] >= num_threads_) {
-    //             finished_ = true;
-    //         }
-    //         condition_variable_->notify_one();
-    //         return;
-    //     }
-    //     runnable->runTask(curr_num_tasks_copy, num_total_tasks);
-    // }
-}
-
-void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked(int level, const std::vector<TaskID>& vec) {
-    // this function will parallel the tasks on the same level in the DAG together
-    int i = 0;
-    int size = vec.size();
-    int curr_num_tasks_copy, num_total_tasks;
-    IRunnable* runnable;
+    int curr_num_tasks_copy;
     while (true) {
-        if (finished_) {
-            condition_variable_->notify_all();
-            return;
-        }
-        mutex_->lock();
-        if (id_finished.size() == size) {
-            mutex_->unlock();
-            finished_level_ = level;
-            finished_ = true;
-            condition_variable_->notify_all();
-            return;               
-        }
-        auto tid = vec[i];
-        if (id_finished.count(tid) == 0) {
-            curr_num_tasks_copy = id_curr_num_tasks[tid];
-            num_total_tasks = id_num_tasks[tid];
-            runnable = id_runnable[tid];
-            id_curr_num_tasks[tid]++;
-            // here we must use the copy local value, since the real value might has been changed by other threads
-            if (curr_num_tasks_copy >= num_total_tasks) {
-                id_finished.insert(tid);
-                mutex_->unlock();
-                i = (i + 1) % size;
-                continue;
-            }
-            mutex_->unlock();
-            runnable->runTask(curr_num_tasks_copy, num_total_tasks);
-        } else mutex_->unlock();
+        if (end_) return;
 
-        i = (i + 1) % size;
+        std::unique_lock<std::mutex> lk(*mutex_);
+        condition_variable_->wait(lk, [this]{return next_round_or_end();});
+
+        if (end_) return;
+
+        auto r = task_r_;
+        auto n = task_n_;
+
+        // 将判断加在这里可以确保当主线程被通知可以不再阻塞时，所有的任务都已经执行完毕
+        if (runTask_time_ == n) {
+            finished_ = true;
+            lk.unlock();
+            condition_variable_main_thread_->notify_one();
+            continue;
+        }       
+
+        // now re-acquire the lk automatically
+        curr_num_tasks_copy = curr_num_tasks_;
+        curr_num_tasks_++;
+        lk.unlock();
+        if (curr_num_tasks_copy >= n) continue;
+        
+        r->runTask(curr_num_tasks_copy, n);
+
+        runTask_time_++;
+
+        // 将if比较放在这里可能在原子变量下产生指令重排
     }
 }
 
@@ -247,61 +243,108 @@ TaskID TaskSystemParallelThreadPoolSleeping::runAsyncWithDeps(IRunnable* runnabl
     //
     // TODO: CS149 students will implement this method in Part B.
     //
+    std::unique_lock<std::mutex> lk(*mutex_);
 
     // update the bookeeping info map
-    mutex_->lock();
     id_runnable[counter_] = runnable;
     id_num_tasks[counter_] = num_total_tasks;
-    mutex_->unlock();
+    lk.unlock();
     id_vecid[counter_] = deps; 
 
-    // update the work queue
-    work_queue.push_back({});
     // return the level that the current task belongs to
     auto level = update_dag(deps);
     id_depth[counter_] = level;
 
+    lk.lock();
+    // update the work queue
+    work_queue.emplace_back();
     //std::cout << "level: " << level << std::endl;
     work_queue[level].push_back(counter_);
+    lk.unlock();
+    condition_variable_->notify_all();
+
+    return counter_++;
+}
+
+void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked() {
+    // this function will parallel the tasks on the same level in the DAG together
+    int i = 0;
     
-    //id_level[counter_] = level;
-    // if there is still work running, then we can directly return here
-    if (!finished_) return counter_++;
+    int curr_num_tasks_copy, num_total_tasks;
+    IRunnable* runnable;
+    while (true) {
 
-    // // // if all the work has been finished, we join the threads
-    join_threads();
+        // ---critical section---
+        std::unique_lock<std::mutex> lk(*mutex_);
 
-    // remove the tasks that have been finished from the work_queue
-    // 注意现在当前level的所有任务未必都完成，因为我们可能刚才上方的代码中在当前level加入了新的元素
-    // 但finished_level代表了刚在处理的层
-    if (finished_level_ >= 0) {
-        auto st = work_queue[finished_level_].begin();
-        work_queue[finished_level_].erase(st, st + id_finished.size());
-        id_finished.clear();        
+        condition_variable_->wait(lk, [this]{return next_round_or_end();});
+
+        if (end_) return;
+
+        int size = vec_.size();
+
+        int sum = 0;
+
+        for (auto & v : vec_) {
+            sum += id_num_tasks[v];
+        }
+
+        // 想要确保该分支只进入一次
+        if (sum == sum_of_level_tasks_) {
+            finished_level_++;
+            finished_ = true;
+            sum_of_level_tasks_ = 0;
+
+            check_next_level();
+            
+            // if the finished_ is still true after executing the checking function, then there is no more in the queue
+            if (finished_) {
+                lk.unlock();
+                condition_variable_main_thread_->notify_one(); 
+                continue;                    
+            }        
+        }
+
+        auto tid = vec_[i];
+        id_finished.insert(tid);
+
+        curr_num_tasks_copy = id_curr_num_tasks[tid];
+        num_total_tasks = id_num_tasks[tid];
+        runnable = id_runnable[tid];
+        id_curr_num_tasks[tid]++;
+        lk.unlock();
+
+        i = (i + 1) % size;
+
+        // here we must use the copy local value, since the real value might has been changed by other threads
+        if (curr_num_tasks_copy >= num_total_tasks) continue;
+
+        runnable->runTask(curr_num_tasks_copy, num_total_tasks);
+
+        sum_of_level_tasks_++;    
     }
+}
 
-    for (int level = 0; level < work_queue.size(); ++level) {
+
+// This function must be used under the protection of lock
+void TaskSystemParallelThreadPoolSleeping::check_next_level() {
+
+    auto st = work_queue[finished_level_].begin();
+    work_queue[finished_level_].erase(st, st + id_finished.size());   
+    id_finished.clear();     
+
+    for (size_t level = 0; level < work_queue.size(); ++level) {
         if (!work_queue[level].empty()) {
             finished_level_ = level - 1;
             break;
         }
     }
 
-    // // so here we can assume all work int the above level has been finished now 
-    // // find the 1st level which has not started yet
-    if (finished_level_ + 1 < work_queue.size())
-        runAsyncWithDepsHelper(finished_level_ + 1);
-    return counter_++;
-}
-
-void TaskSystemParallelThreadPoolSleeping::runAsyncWithDepsHelper(int next_start_level) {
-
-    // since this function will not be called at the same time with the multithreading function, mutex is not a must
-    auto vec = work_queue[next_start_level];
-    if (vec.empty()) return;
-    finished_ = false;
-    for (int i = 0; i < num_threads_; i++) {
-        threads_[i] = std::thread(&TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked, this, next_start_level, vec);
+    if (finished_level_ + 1 < work_queue.size()) {
+        vec_ = work_queue[finished_level_ + 1];
+        if (vec_.size()) {
+            finished_ = false;
+        }
     }
 }
 
@@ -318,46 +361,25 @@ int TaskSystemParallelThreadPoolSleeping::update_dag(const std::vector<TaskID>& 
 }
 
 void TaskSystemParallelThreadPoolSleeping::sync() {
+    //std::cout << "start to sync" << std::endl;
     //
     // TODO: CS149 students will modify the implementation of this method in Part B.
     //
-    
-    // get the maxmium level
-    int last_level = work_queue.size() - 1;
-    for (; last_level > finished_level_ + 1; --last_level) {
-        if (!work_queue[last_level].empty()) {
-            break;
-        }
-    }    
-
-    last_level += 1;
 
     std::unique_lock<std::mutex> lk(*mutex_);
-    condition_variable_->wait(lk, [&]{return if_finished();});
-    lk.unlock();
-    join_threads();
-    if (finished_level_ >= 0) {
-        auto st = work_queue[finished_level_].begin();
-        work_queue[finished_level_].erase(st, st + id_finished.size());
-        id_finished.clear();        
-    }
-    for (int level = 0; level < work_queue.size(); ++level) {
-        if (!work_queue[level].empty()) {
-            finished_level_ = level - 1;
-            break;
-        }
-    }
+    condition_variable_main_thread_->wait(lk, [this]{return if_finished();});
+    //lk.unlock();
+    
+    
+    // get the maxmium level
+    check_next_level();
 
-    // in this loop, deal with one level per loop
-    for (int i = finished_level_ + 1; i < last_level; ++i) {
-        runAsyncWithDepsHelper(i);
-        lk.lock();
-        // block this thread and give away the CPU execution resources until the jon has been finished
-        // 这里可能发生的一种情况是，该主线程被自线程以notify_all唤醒，但是试图获取锁时，发现其余自线程正霸占着这把锁，所以继续sleep
-        // 可能造成主线程最终无法被唤醒，解决方法是让每一个自线程退出时，都试图notify_all一下主线程
-        condition_variable_->wait(lk, [&]{return if_finished();});
-        lk.unlock();
-        join_threads();
-        id_finished.clear();
-    }
+    if (finished_) return;
+
+    lk.unlock();
+    condition_variable_->notify_all();
+
+    lk.lock();
+
+    condition_variable_main_thread_->wait(lk, [this]{return if_finished();});
 }

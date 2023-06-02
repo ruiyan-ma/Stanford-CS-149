@@ -111,7 +111,14 @@ const char* TaskSystemParallelThreadPoolSpinning::name() {
 }
 
 TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int num_threads): 
-    ITaskSystem(num_threads), num_threads_(num_threads), curr_num_tasks_(0) {
+    ITaskSystem(num_threads), 
+    num_threads_(num_threads), 
+    curr_num_tasks_(0), 
+    runnable_(nullptr), 
+    num_total_tasks_(0), 
+    finished_(true), 
+    end_(false),
+    run_time_(0) {
     //
     // TODO: CS149 student implementations may decide to perform setup
     // operations (such as thread pool construction) here.
@@ -120,9 +127,21 @@ TaskSystemParallelThreadPoolSpinning::TaskSystemParallelThreadPoolSpinning(int n
     //
     threads_ = new std::thread[num_threads];
     mutex_ = new std::mutex();
+
+    for (int i = 0; i < num_threads; ++i) {
+        threads_[i] = std::thread(&TaskSystemParallelThreadPoolSpinning::runTaskMultiThreading, this);
+    }
 }
 
 TaskSystemParallelThreadPoolSpinning::~TaskSystemParallelThreadPoolSpinning() {
+
+    mutex_->lock();
+    end_ = true;
+    mutex_->unlock();
+
+    for (int i = 0; i < num_threads_; i++)
+        if (threads_[i].joinable()) threads_[i].join();
+
     delete[] threads_;
     delete mutex_;
 }
@@ -141,29 +160,48 @@ void TaskSystemParallelThreadPoolSpinning::run(IRunnable* runnable, int num_tota
     // }
 
     // 上一个小节使用的是静态分配工作线程的方法，这里尝试使用动态分配工作线程
-    for (int i = 0; i < num_threads_; ++i) {
-        threads_[i] = std::thread(&TaskSystemParallelThreadPoolSpinning::runTaskMultiThreading, this, runnable, num_total_tasks);
-    }
-
-    for (int i = 0; i < num_threads_; ++i) {
-        threads_[i].join();
-    }
-
+    std::unique_lock<std::mutex> lk(*mutex_);
+    finished_ = false;
     // must clear the shared variable in case for the next use
-    curr_num_tasks_ = 0;
-}
+    runnable_ = runnable;
+    num_total_tasks_ = num_total_tasks;
+    lk.unlock();
 
-void TaskSystemParallelThreadPoolSpinning::runTaskMultiThreading(IRunnable* runnable, int num_total_tasks) {
-    int curr_num_tasks_copy;
     while (true) {
-        mutex_->lock();
-        curr_num_tasks_copy = curr_num_tasks_;
-        curr_num_tasks_++;
-        mutex_->unlock();
-        if (curr_num_tasks_copy >= num_total_tasks) {
+        lk.lock();
+        if (finished_) {
+            curr_num_tasks_ = 0;
+            run_time_ = 0;
             return;
         }
-        runnable->runTask(curr_num_tasks_copy, num_total_tasks);
+        lk.unlock();
+    }
+}
+
+void TaskSystemParallelThreadPoolSpinning::runTaskMultiThreading() {
+    int curr_num_tasks_copy = 0;
+    while (true) {
+        std::unique_lock<std::mutex> lk(*mutex_);
+        
+        if (end_) return;
+        if (!runnable_) continue;
+        
+        auto r = runnable_;
+        auto n = num_total_tasks_;
+
+        if (run_time_ == n) {
+            finished_ = true;
+            runnable_ = nullptr;
+            continue;
+        }
+        
+        curr_num_tasks_copy = curr_num_tasks_;
+        curr_num_tasks_++;
+        if (curr_num_tasks_copy >= n) continue;
+        lk.unlock();
+        r->runTask(curr_num_tasks_copy, n);
+        //lk.lock();
+        run_time_++;
     }
 }
 
@@ -203,7 +241,6 @@ TaskSystemParallelThreadPoolSleeping::TaskSystemParallelThreadPoolSleeping(int n
     //
     threads_ = new std::thread[num_threads_];
     mutex_ = new std::mutex();
-    mutex_main_thread_ = new std::mutex();
     condition_variable_ = new std::condition_variable();
     condition_variable_main_thread_ = new std::condition_variable();
 
@@ -221,16 +258,22 @@ TaskSystemParallelThreadPoolSleeping::~TaskSystemParallelThreadPoolSleeping() {
     //
     end_ = true;
 
+    //std::cout << "start loop" << std::endl;
+
     // notify all the threads
+    //while (finished_threads_ < num_threads_)
     condition_variable_->notify_all();
+
+    
 
     for (int i = 0; i < num_threads_; ++i) {
         if (threads_[i].joinable()) threads_[i].join();
     }
 
+    
+
     delete[] threads_;
     delete mutex_;
-    delete mutex_main_thread_;
     delete condition_variable_;
     delete condition_variable_main_thread_;
 }
@@ -243,17 +286,17 @@ void TaskSystemParallelThreadPoolSleeping::run(IRunnable* runnable, int num_tota
     // method in Parts A and B.  The implementation provided below runs all
     // tasks sequentially on the calling thread.
     //
-
+    //std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    
     task_r_ = runnable;
     task_n_ = num_total_tasks;
-    // 只要在这条语句之后，自线程就可以开始运行了
-    // 所以必须保证在更新false之前，task已经被更新
     finished_ = false;
 
     // 注意notify_all会唤醒所有线程，而拿不到锁的线程会轮询以试图获得锁，而不是再次沉睡
     condition_variable_->notify_all();
-    std::unique_lock<std::mutex> lk(*mutex_main_thread_);
-    condition_variable_main_thread_->wait(lk, [&]{return is_finished();});
+    std::unique_lock<std::mutex> lk(*mutex_);
+    condition_variable_main_thread_->wait(lk, [this]{return is_finished();});
+    task_n_ = 0;
     runTask_time_ = 0;
     curr_num_tasks_ = 0;
 }
@@ -264,23 +307,32 @@ void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading() {
         if (end_) return;
 
         std::unique_lock<std::mutex> lk(*mutex_);
-        condition_variable_->wait(lk, [&]{return next_round_or_end();});
+        condition_variable_->wait(lk, [this]{return next_round_or_end();});
 
         if (end_) return;
+
+        auto r = task_r_;
+        auto n = task_n_;
+
+        // 将判断加在这里可以确保当主线程被通知可以不再阻塞时，所有的任务都已经执行完毕
+        if (runTask_time_ == n) {
+            finished_ = true;
+            lk.unlock();
+            condition_variable_main_thread_->notify_one();
+            continue;
+        }       
 
         // now re-acquire the lk automatically
         curr_num_tasks_copy = curr_num_tasks_;
         curr_num_tasks_++;
         lk.unlock();
-        if (curr_num_tasks_copy >= task_n_) continue;
+        if (curr_num_tasks_copy >= n) continue;
         
-        task_r_->runTask(curr_num_tasks_copy, task_n_);
+        r->runTask(curr_num_tasks_copy, n);
+
         runTask_time_++;
-        // 将判断加在这里可以确保当主线程被通知可以不再阻塞时，所有的任务都已经执行完毕
-        if (runTask_time_ == task_n_) {
-            finished_ = true;
-            condition_variable_main_thread_->notify_one();
-        }
+
+        // 将if比较放在这里可能在原子变量下产生指令重排
     }
 }
 

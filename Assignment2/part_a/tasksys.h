@@ -7,7 +7,9 @@
 #include <mutex>
 #include <condition_variable>
 #include <iostream>
-#include <queue>
+#include <chrono>
+#include <atomic>
+#include <memory>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -65,11 +67,17 @@ class TaskSystemParallelThreadPoolSpinning: public ITaskSystem {
     private:
         std::thread* threads_;
         int num_threads_;
-        void runTaskMultiThreading(IRunnable* runnable, int num_total_tasks);
+        void runTaskMultiThreading();
 
         // shared variables for multithreading
         int curr_num_tasks_;
         std::mutex* mutex_;
+
+        IRunnable* runnable_;
+        int num_total_tasks_;
+        bool finished_;
+        bool end_;
+        std::atomic<int> run_time_;
 };
 
 /*
@@ -102,7 +110,6 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         std::atomic<int> runTask_time_;
         std::thread* threads_;
         std::mutex* mutex_;
-        std::mutex* mutex_main_thread_;
         std::condition_variable* condition_variable_;
         std::condition_variable* condition_variable_main_thread_;
         int task_n_;

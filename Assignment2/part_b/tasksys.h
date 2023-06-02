@@ -10,6 +10,8 @@
 #include <unordered_set>
 #include <queue>
 #include <algorithm>
+#include <atomic>
+#include <memory>
 
 /*
  * TaskSystemSerial: This class is the student's implementation of a
@@ -80,21 +82,30 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
             return finished_;
         };
 
+        bool next_round_or_end() {
+            return end_ || !finished_;
+        };
+
     private:
         int num_threads_;
         // int curr_num_tasks_;
-        // std::atomic<int> finished_threads_;
         std::thread* threads_;
         std::mutex* mutex_;
         std::condition_variable* condition_variable_;
-        std::atomic<bool> finished_;
+        std::condition_variable* condition_variable_main_thread_;
+        bool finished_;
+        bool end_;
+
+        std::atomic<int> sum_of_level_tasks_;
+
+        //int next_start_level_;
+        std::vector<TaskID> vec_;
 
         // this variable will always record the smallest level that is not finished
-        std::atomic<int> finished_level_;
+        int finished_level_;
 
         void runTasksMultithreading(TaskID tid, IRunnable* runnable, int num_total_tasks);
-        void runTasksMultithreading_chunked(int next_start_level, const std::vector<TaskID>& vec);
-        void runAsyncWithDepsHelper(int next_start_level);
+        void runTasksMultithreading_chunked();
         int update_dag(const std::vector<TaskID>& deps);
 
         TaskID counter_;
@@ -107,11 +118,23 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
         std::vector<std::vector<TaskID>> work_queue;
         std::unordered_set<TaskID> id_finished;
 
+        //int level_finished_;
+
         void join_threads() {
             for (int i = 0; i < num_threads_; ++i) {
                 if (threads_[i].joinable()) threads_[i].join();
             }
         };
+
+        void check_next_level();
+
+
+
+        // the following is for sync execution
+        int curr_num_tasks_;
+        std::atomic<int> runTask_time_;
+        int task_n_;
+        IRunnable* task_r_;
 };
 
 #endif
