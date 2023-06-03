@@ -88,7 +88,6 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
 
     private:
         int num_threads_;
-        // int curr_num_tasks_;
         std::thread* threads_;
         std::mutex* mutex_;
         std::condition_variable* condition_variable_;
@@ -98,7 +97,6 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
 
         std::atomic<int> sum_of_level_tasks_;
 
-        //int next_start_level_;
         std::vector<TaskID> vec_;
 
         // this variable will always record the smallest level that is not finished
@@ -110,15 +108,12 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
 
         TaskID counter_;
 
-        std::unordered_map<TaskID, IRunnable*> id_runnable;
-        std::unordered_map<TaskID, int> id_num_tasks;
-        std::unordered_map<TaskID, int> id_curr_num_tasks;
+        std::unordered_map<TaskID, IRunnable*> id_runnable;         // record the runnable corresponding with the TID
+        std::unordered_map<TaskID, int> id_num_tasks;               // record the num_total_tasks
+        std::unordered_map<TaskID, int> id_curr_num_tasks;          // record the task_ids that should be executed next
         std::unordered_map<TaskID, std::vector<TaskID>> id_vecid;   // use this to find the DAG
         std::unordered_map<TaskID, int> id_depth;                   // record the depth/level of the task
-        std::vector<std::vector<TaskID>> work_queue;
-        std::unordered_set<TaskID> id_finished;
-
-        //int level_finished_;
+        std::vector<std::vector<TaskID>> work_queue;                // work queue that record dependencies of different level
 
         void join_threads() {
             for (int i = 0; i < num_threads_; ++i) {
@@ -128,9 +123,7 @@ class TaskSystemParallelThreadPoolSleeping: public ITaskSystem {
 
         void check_next_level();
 
-
-
-        // the following is for sync execution
+        /** --------------- the following is for sync execution --------------*/
         int curr_num_tasks_;
         std::atomic<int> runTask_time_;
         int task_n_;

@@ -304,7 +304,6 @@ void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked() {
         }
 
         auto tid = vec_[i];
-        id_finished.insert(tid);
 
         curr_num_tasks_copy = id_curr_num_tasks[tid];
         num_total_tasks = id_num_tasks[tid];
@@ -328,8 +327,7 @@ void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading_chunked() {
 void TaskSystemParallelThreadPoolSleeping::check_next_level() {
 
     auto st = work_queue[finished_level_].begin();
-    work_queue[finished_level_].erase(st, st + id_finished.size());   
-    id_finished.clear();     
+    work_queue[finished_level_].erase(st, st + vec_.size());   
 
     for (size_t level = 0; level < work_queue.size(); ++level) {
         if (!work_queue[level].empty()) {
