@@ -231,8 +231,6 @@ void TaskSystemParallelThreadPoolSleeping::runTasksMultithreading(TaskID tid, IR
         r->runTask(curr_num_tasks_copy, n);
 
         runTask_time_++;
-
-        // 将if比较放在这里可能在原子变量下产生指令重排
     }
 }
 
